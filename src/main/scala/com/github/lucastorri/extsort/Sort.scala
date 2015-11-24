@@ -19,7 +19,7 @@ object Settings {
 
 object Sort extends App with StrictLogging {
 
-  val splitter = OverflowedMaxSizeFileSplitter(16 * 1024 * 1024, Settings.charset)
+  val splitter = ParallelFileSplitter(16 * 1024 * 1024, Settings.charset)
   val sorter = SplitMergeExternalSort(splitter, 4)
 
   def timed[R](action: => R): (R, Long) = {

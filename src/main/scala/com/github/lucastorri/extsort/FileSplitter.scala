@@ -1,15 +1,13 @@
 package com.github.lucastorri.extsort
 
-import java.io.{FileInputStream, InputStreamReader}
+import java.io.{BufferedReader, FileInputStream, InputStreamReader}
 import java.nio.channels.FileChannel
 import java.nio.charset.Charset
 import java.nio.file.{Files, Path, StandardOpenOption}
 import java.nio.{ByteBuffer, CharBuffer}
 
-import com.google.common.io.CountingInputStream
 import com.typesafe.scalalogging.StrictLogging
 
-import scala.annotation.tailrec
 import scala.collection.mutable
 
 trait FileSplitter {
@@ -93,6 +91,68 @@ case class OverflowedMaxSizeFileSplitter(charsPerSplit: Long, charset: Charset) 
   }
 
   def charSizeInBytes(c: Char): Int = {
+    charBuffer.position(0)
+    charBuffer.append(c)
+    charBuffer.position(0)
+    charset.encode(charBuffer).array().length
+  }
+
+}
+
+case class ParallelFileSplitter(bytesPerSplit: Long, charset: Charset) extends FileSplitter with StrictLogging {
+
+  override def split(file: Path): Seq[Split] = {
+    val fileSize = Files.size(file)
+    logger.debug(s"Splitting $file with size $fileSize")
+
+    var needsToSplit = true
+    var splits = Seq(0L -> fileSize).par
+
+    while (needsToSplit) {
+      var wasSplit = false
+      splits = splits.flatMap { case (start, end) =>
+        val n = split(file, start, end)
+        wasSplit |= n.size > 1
+        n
+      }
+      needsToSplit = wasSplit
+    }
+
+    logger.info("Split done")
+    splits.map { case (start, end) => Split(file, charset, start, end) }.seq
+  }
+
+  private def split(file: Path, start: Long, end: Long): Seq[(Long, Long)] = {
+    if ((end - start) <= bytesPerSplit) {
+      return Seq(start -> end)
+    }
+
+    val middle = (end + start) / 2
+    val reader = new BufferedReader(new InputStreamReader(new FileInputStream(file.toFile), charset))
+
+    var eol = middle
+    def read(): Int = {
+      val next = reader.read()
+      if (next > 0) eol += charSizeInBytes(next.toChar)
+      next
+    }
+
+    while (eol < end && read() != '\n') {}
+    reader.close()
+
+    val split =
+      if (eol >= end) Seq(start -> end)
+      else Seq(start -> eol, eol -> end)
+
+    logger.debug {
+      val str = split.map { case (s, e) => s"$s-$e"}.mkString("[", ",", "]")
+      s"Splitting $start-$end into $str"
+    }
+    split
+  }
+
+  def charSizeInBytes(c: Char): Int = {
+    val charBuffer = CharBuffer.allocate(1)
     charBuffer.position(0)
     charBuffer.append(c)
     charBuffer.position(0)
