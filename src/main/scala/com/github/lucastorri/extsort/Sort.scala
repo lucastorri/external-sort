@@ -56,19 +56,21 @@ object GenerateTestFile extends App {
 
 object ValidateSortedFile extends App with StrictLogging {
 
-  logger.info(s"Validating file: ${Settings.file}")
+  val file = Paths.get(s"${Settings.file}.sorted")
+  logger.info(s"Validating file: $file")
 
-  val stream = LineReader(Paths.get(s"${Settings.file}.sorted"), Settings.charset).toStream
+  val stream = LineReader(file, Settings.charset).toStream
 
   @tailrec
-  def invalidPair(pairs: Stream[String]): Option[(String, String)] = {
-    if (pairs.size < 2) None
-    else {
-      val tail = pairs.tail
-      val n0 = pairs.head
-      val n1 = tail.head
-      if (n0.compare(n1) > 0) Some(n0 -> n1)
-      else invalidPair(tail)
+  def invalidPair(lines: Stream[String], previous: Option[String] = None): Option[(String, String)] = {
+    if (lines.isEmpty) None
+    else previous match {
+      case None =>
+        invalidPair(lines.tail, Some(lines.head))
+      case Some(p) =>
+        val n = lines.head
+        if (p.compare(n) > 0) Some(p -> n)
+        else invalidPair(lines.tail, Some(p))
     }
   }
 
