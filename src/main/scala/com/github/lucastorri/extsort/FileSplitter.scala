@@ -1,6 +1,6 @@
 package com.github.lucastorri.extsort
 
-import java.io.{BufferedReader, FileInputStream, InputStreamReader}
+import java.io._
 import java.nio.channels.FileChannel
 import java.nio.charset.Charset
 import java.nio.file.{Files, Path, StandardOpenOption}
@@ -99,7 +99,7 @@ case class OverflowedMaxSizeFileSplitter(charsPerSplit: Long, charset: Charset) 
 
 }
 
-case class ParallelFileSplitter(bytesPerSplit: Long, charset: Charset) extends FileSplitter with StrictLogging {
+case class ParallelFileSplitter(maxBytesPerSplit: Long, charset: Charset) extends FileSplitter with StrictLogging {
 
   override def split(file: Path): Seq[Split] = {
     val fileSize = Files.size(file)
@@ -123,32 +123,62 @@ case class ParallelFileSplitter(bytesPerSplit: Long, charset: Charset) extends F
   }
 
   private def split(file: Path, start: Long, end: Long): Seq[(Long, Long)] = {
-    if ((end - start) <= bytesPerSplit) {
-      return Seq(start -> end)
-    }
-
-    val middle = (end + start) / 2
-    val reader = new BufferedReader(new InputStreamReader(new FileInputStream(file.toFile), charset))
-
-    var eol = middle
-    def read(): Int = {
-      val next = reader.read()
-      if (next > 0) eol += charSizeInBytes(next.toChar)
-      next
-    }
-
-    while (eol < end && read() != '\n') {}
-    reader.close()
 
     val split =
-      if (eol >= end) Seq(start -> end)
-      else Seq(start -> eol, eol -> end)
+      if ((end - start) <= maxBytesPerSplit) {
+        Seq(start -> end)
+      } else {
+        val middle = (end + start) / 2
+        val lineStart = startOfLine(file, middle)
+        if (lineStart <= start) Seq(start -> end)
+        else Seq(start -> lineStart, lineStart -> end)
+      }
 
     logger.debug {
       val str = split.map { case (s, e) => s"$s-$e"}.mkString("[", ",", "]")
       s"Splitting $start-$end into $str"
     }
+
     split
+  }
+
+  def startOfLine(file: Path, middle: Long): Long = {
+    val raf = new RandomAccessFile(file.toFile, "r")
+    val buf = Array.ofDim[Byte](4 * 1024)
+
+    var checkpoint = middle
+    var notFound = true
+    var at = 0L
+
+    while (notFound) {
+      val readFrom = math.max(0, checkpoint - buf.length + 1)
+      val toRead = math.min(buf.length, middle - readFrom).toInt
+
+      raf.seek(readFrom)
+      val got = raf.read(buf, 0, toRead)
+      val chars = charset.decode(ByteBuffer.wrap(buf, 0, got))
+
+      var n = 0
+      val it = chars.array().reverseIterator
+      while (notFound && it.nonEmpty) {
+        val c = it.next()
+        if (c == '\n') {
+          notFound = false
+          at = readFrom + got - n
+        }
+        n += charSizeInBytes(c)
+      }
+
+      if (notFound && readFrom == 0) {
+        notFound = false
+        at = 0L
+      }
+
+      checkpoint -= got
+    }
+
+    raf.close()
+    at
   }
 
   def charSizeInBytes(c: Char): Int = {

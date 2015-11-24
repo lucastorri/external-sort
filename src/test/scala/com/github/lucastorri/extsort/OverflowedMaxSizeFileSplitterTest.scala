@@ -5,13 +5,7 @@ import java.nio.file.Files
 
 import org.scalatest.{MustMatchers, FlatSpec}
 
-class OverflowedMaxSizeFileSplitterTest extends FlatSpec with MustMatchers {
-
-  val lines = (0 to 99).map(i => f"$i%02d").mkString("\n")
-  val charset = StandardCharsets.UTF_8
-  val file = Files.createTempFile("split-", "-test-file")
-
-  Files.write(file, lines.getBytes(charset))
+class OverflowedMaxSizeFileSplitterTest extends FlatSpec with MustMatchers with TestInput {
 
   it must "split lines" in {
 
